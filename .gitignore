@@ -1,0 +1,17 @@
+# Ignore Python virtual environment
+venv/
+__pycache__/
+
+# Ignore Node.js dependencies
+chat-client/node_modules
+/.pnp
+.pnp.js
+
+# Ignore environment variables
+.env
+
+# Ignore build files
+chat-client/build
+
+# Ignore system files
+.DS_Store
