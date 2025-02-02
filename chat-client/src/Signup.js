@@ -1,50 +1,75 @@
 import React, { useState } from "react";
-import { Container, TextField, Button, Typography, Paper, Box, Link } from "@mui/material";
+import { TextField, Button, Container, Paper, Typography, Box, IconButton } from "@mui/material";
 import { useNavigate } from "react-router-dom";
+import { useTheme } from "./ThemeContext";
+import DarkModeIcon from "@mui/icons-material/DarkMode";
+import LightModeIcon from "@mui/icons-material/LightMode";
 
 function Signup() {
+  const { darkMode, toggleDarkMode } = useTheme();
+  const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const navigate = useNavigate(); // ✅ Hook to navigate pages
 
   const handleSignup = async () => {
-    try {
-      const response = await fetch("http://localhost:8000/signup/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
+    const response = await fetch("http://localhost:8000/signup/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
 
-      if (response.ok) {
-        alert("Signup successful! You can now login.");
-        navigate("/login"); // ✅ Redirect to login page
-      } else {
-        alert("Signup failed. Username may already be taken.");
-      }
-    } catch (error) {
-      console.error("Signup Error:", error);
+    if (response.ok) {
+      alert("Signup successful! Please log in.");
+      navigate("/login");
+    } else {
+      alert("Username already exists.");
     }
   };
 
   return (
     <Container maxWidth="xs">
-      <Paper elevation={3} sx={{ padding: 4, mt: 8, textAlign: "center" }}>
-        <Typography variant="h4" gutterBottom>
+      <Paper
+        elevation={3}
+        sx={{
+          padding: 3,
+          textAlign: "center",
+          marginTop: "50px",
+          backgroundColor: darkMode ? "#424242" : "white",
+          color: darkMode ? "#ffffff" : "#000000",
+        }}
+      >
+        <IconButton onClick={toggleDarkMode} sx={{ float: "right" }}>
+          {darkMode ? <LightModeIcon /> : <DarkModeIcon />}
+        </IconButton>
+
+        <Typography variant="h5">Sign Up</Typography>
+
+        <TextField
+          fullWidth
+          label="Username"
+          margin="normal"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          sx={{ backgroundColor: darkMode ? "#616161" : "white", borderRadius: 1 }}
+        />
+
+        <TextField
+          fullWidth
+          label="Password"
+          type="password"
+          margin="normal"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          sx={{ backgroundColor: darkMode ? "#616161" : "white", borderRadius: 1 }}
+        />
+
+        <Button variant="contained" color="primary" sx={{ marginTop: 2 }} onClick={handleSignup}>
           Sign Up
-        </Typography>
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <TextField label="Username" variant="outlined" fullWidth value={username} onChange={(e) => setUsername(e.target.value)} />
-          <TextField label="Password" type="password" variant="outlined" fullWidth value={password} onChange={(e) => setPassword(e.target.value)} />
-          <Button variant="contained" color="primary" fullWidth onClick={handleSignup}>
-            Sign Up
-          </Button>
-        </Box>
-        <Typography sx={{ mt: 2 }}>
-          Already have an account?{" "}
-          <Link component="button" variant="body2" onClick={() => navigate("/login")}>
-            Login
-          </Link>
-        </Typography>
+        </Button>
+
+        <Button sx={{ marginTop: 2 }} onClick={() => navigate("/login")}>
+          Already have an account? Login
+        </Button>
       </Paper>
     </Container>
   );
