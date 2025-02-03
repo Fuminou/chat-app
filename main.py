@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 import os
 from fastapi.staticfiles import StaticFiles
 import shutil
-from datetime import datetime
+import datetime
+import base64
 
 
 app = FastAPI()
@@ -51,16 +52,16 @@ async def connect_db():
         load_dotenv()
         database_url = os.getenv("DATABASE_URL")
         if not database_url:
-            print("❌ ERROR: DATABASE_URL is missing or not loaded!")
+            print("ERROR: DATABASE_URL is missing or not loaded!")
             return None
 
         # Create new connection pool
         db_pool = await asyncpg.create_pool(database_url, min_size=1, max_size=5, timeout=10)
-        print("✅ Database connection established!")
+        print("Database connection established!")
         return db_pool
 
     except Exception as e:
-        print(f"❌ Database connection error: {e}")
+        print(f"Database connection error: {e}")
         db_pool = None  # Ensure the variable is reset to None
         return None
 
@@ -95,6 +96,7 @@ def create_jwt_token(data: dict):
     data.update({"exp": expire})
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
+
 #User Signup
 @app.post("/signup/")
 async def signup(user: UserSignup):
@@ -116,13 +118,16 @@ async def signup(user: UserSignup):
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     pool = await connect_db()
     if not pool:
-        raise HTTPException(status_code=500, detail="Database connection failed")  # ✅ Prevents crashes
+        raise HTTPException(status_code=500, detail="Database connection failed")
 
     async with pool.acquire() as conn:
         user = await conn.fetchrow("SELECT id, username, password FROM users WHERE username=$1", form_data.username)
         if not user or not pwd_context.verify(form_data.password, user["password"]):
             raise HTTPException(status_code=401, detail="Invalid username or password")
-        
+
+        # Mark user as active
+        await conn.execute("UPDATE users SET is_active = TRUE WHERE username = $1", user["username"])
+
         token = create_jwt_token({"sub": user["username"]})
         return {"access_token": token, "token_type": "bearer"}
 
@@ -194,40 +199,27 @@ async def websocket_endpoint(websocket: WebSocket):
 async def ping_db():
     pool = await connect_db()
     if not pool:
-        return {"status": "❌ Database connection failed!"}
-    return {"status": "✅ Database is connected!"}
+        return {"status": "Database connection failed!"}
+    return {"status": "Database is connected!"}
 
     
 # Fetch User Profile
 @app.get("/get_user_profile/")
 async def get_user_profile(username: str):
     pool = await connect_db()
-
     if not pool:
-        print("❌ Database pool is unavailable!")
         raise HTTPException(status_code=500, detail="Database connection failed")
 
-    try:
-        async with pool.acquire() as conn:
-            user_profile = await conn.fetchrow("SELECT profile_picture, bio FROM users WHERE username=$1", username)
+    async with pool.acquire() as conn:
+        user_profile = await conn.fetchrow("SELECT profile_picture, bio FROM users WHERE username=$1", username)
 
-            if user_profile:
-                print(f"✅ Fetched profile for {username}: {user_profile}")
-                return {
-                    "profile_picture": user_profile["profile_picture"] or "",
-                    "bio": user_profile["bio"] or ""
-                }
-            else:
-                raise HTTPException(status_code=404, detail="User not found")
-
-    except asyncpg.exceptions.InterfaceError as e:
-        print(f"❌ Database connection lost while fetching {username}: {e}")
-        raise HTTPException(status_code=500, detail="Database connection lost. Please try again.")
-
-    except Exception as e:
-        print(f"❌ Error fetching profile for {username}: {e}")
-        raise HTTPException(status_code=500, detail="Error fetching user profile")
-
+        if user_profile:
+            return {
+                "profile_picture": user_profile["profile_picture"] or "",
+                "bio": user_profile["bio"] or "",
+            }
+        else:
+            raise HTTPException(status_code=404, detail="User not found")
 
 
 # Update Profile
@@ -244,19 +236,30 @@ async def update_profile(data: dict):
 # Upload Profile Picture
 @app.post("/upload_profile_picture/")
 async def upload_profile_picture(username: str = Form(...), file: UploadFile = File(...)):
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    try:
+        # Define the file path
+        file_extension = file.filename.split(".")[-1]  # Get file extension
+        file_name = f"{username}.{file_extension}"  # Save with username as filename
+        file_path = os.path.join(UPLOAD_DIR, file_name)
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        # Save file locally
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-    file_url = f"http://localhost:8000/uploads/{file.filename}"
-    print(f"✅ Saving profile picture for {username}: {file_url}")  # ✅ Debug output
+        # Generate file URL
+        file_url = f"http://localhost:8000/uploads/{file_name}"
 
-    async with await connect_db() as pool:
-        async with pool.acquire() as conn:
-            await conn.execute("UPDATE users SET profile_picture=$1 WHERE username=$2", file_url, username)
+        # Update database with file URL
+        async with await connect_db() as pool:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE users SET profile_picture=$1 WHERE username=$2",
+                    file_url, username
+                )
 
-    return {"profile_picture_url": file_url}
+        return {"profile_picture_url": file_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload profile picture: {str(e)}")
 
 #Send Message (Save to Database)
 @app.post("/send_message/")
@@ -284,3 +287,49 @@ async def get_messages():
                 }
                 for row in rows
             ]
+        
+# Active Users Endpoint
+@app.get("/get_active_users/")
+async def get_active_users():
+    pool = await connect_db()
+    if not pool:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT username, profile_picture FROM users WHERE is_active = TRUE")
+
+        active_users = []
+        for row in rows:
+            profile_pic = row["profile_picture"]
+
+            # Ensure profile pictures are either None or a valid string URL
+            if isinstance(profile_pic, bytes):
+                profile_pic = profile_pic.decode(errors="ignore")  # Handle decoding issues safely
+
+            active_users.append({
+                "username": row["username"],
+                "profile_picture": profile_pic or ""  # Return an empty string if None
+            })
+
+        return {"active_users": active_users}
+
+
+@app.post("/logout/")
+async def logout(token: str = Depends(oauth2_scheme)):
+    pool = await connect_db()
+    if not pool:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE users SET is_active = FALSE WHERE username = $1", username)
+
+        return {"message": "User logged out successfully"}
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")

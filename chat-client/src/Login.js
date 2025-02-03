@@ -5,7 +5,7 @@ import { useTheme } from "./ThemeContext";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import LightModeIcon from "@mui/icons-material/LightMode";
 
-function Login({ setIsAuthenticated }) {  // ✅ Accept setIsAuthenticated as a prop
+function Login({ setIsAuthenticated }) {  // Accept setIsAuthenticated as a prop
   const { darkMode, toggleDarkMode } = useTheme();
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
